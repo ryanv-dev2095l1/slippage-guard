@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "slippage-guard"
+version = "0.1.0"
+description = "Pre-flight slippage checker against live L2 order books"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Alex Carter", email = "alex@carterlabs.cc" }
+]
+dependencies = [
+    "httpx>=0.24.0",
+    "pydantic>=2.0.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+slippage-guard = "slippage_guard.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["slippage_guard*"]
