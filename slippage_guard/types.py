@@ -43,3 +43,5 @@ class SlippageError(Exception):
         self.max_bps = max_bps
         super().__init__(f"{symbol} slippage {actual_bps:.2f} bps exceeds limit {max_bps:.2f} bps")
 
+class InsufficientLiquidityError(Exception):
+    pass
