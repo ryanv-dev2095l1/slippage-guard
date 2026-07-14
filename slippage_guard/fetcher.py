@@ -26,6 +26,13 @@ def _request_with_retry(url: str, params: dict = None, headers: dict = None) -> 
     raise RuntimeError(f"failed fetching {url} after {MAX_RETRIES + 1} attempts: {last_err}")
 
 
+def _sort_book(bids, asks):
+    # make sure bids are descending and asks are ascending regardless of upstream quirks
+    sorted_bids = sorted(bids, key=lambda x: x[0], reverse=True)
+    sorted_asks = sorted(asks, key=lambda x: x[0], reverse=False)
+    return sorted_bids, sorted_asks
+
+
 def fetch_binance(symbol: str, limit: int = 100) -> OrderBook:
     url = "https://api.binance.com/api/v3/depth"
     clean_sym = symbol.replace("-", "").replace("/", "").replace("_", "").upper()
@@ -33,6 +40,7 @@ def fetch_binance(symbol: str, limit: int = 100) -> OrderBook:
 
     bids = [(Decimal(p), Decimal(s)) for p, s in data.get("bids", [])]
     asks = [(Decimal(p), Decimal(s)) for p, s in data.get("asks", [])]
+    bids, asks = _sort_book(bids, asks)
     return OrderBook(exchange=Exchange.BINANCE, symbol=symbol, bids=bids, asks=asks)
 
 
@@ -45,11 +53,12 @@ def fetch_coinbase(symbol: str) -> OrderBook:
 
     bids = [(Decimal(item[0]), Decimal(item[1])) for item in data.get("bids", [])]
     asks = [(Decimal(item[0]), Decimal(item[1])) for item in data.get("asks", [])]
+    bids, asks = _sort_book(bids, asks)
     return OrderBook(exchange=Exchange.COINBASE, symbol=symbol, bids=bids, asks=asks)
 
 
 def fetch_kraken(symbol: str, count: int = 100) -> OrderBook:
-    # kraken symbol mapping can be weird (e.g. XBTUSDT or XXBTZUSD)
+    # FIXME: add a proper pair normalizer table instead of this ad-hoc if/else
     clean_sym = symbol.replace("/", "").replace("-", "").replace("_", "").upper()
     if clean_sym == "BTCUSD":
         clean_sym = "XXBTZUSD"
@@ -64,12 +73,12 @@ def fetch_kraken(symbol: str, count: int = 100) -> OrderBook:
         raise RuntimeError(f"kraken error: {data['error']}")
 
     result = data["result"]
-    # kraken returns pair as the only key inside result
     pair_key = next(iter(result))
     pair_data = result[pair_key]
 
     bids = [(Decimal(item[0]), Decimal(item[1])) for item in pair_data.get("bids", [])]
     asks = [(Decimal(item[0]), Decimal(item[1])) for item in pair_data.get("asks", [])]
+    bids, asks = _sort_book(bids, asks)
     return OrderBook(exchange=Exchange.KRAKEN, symbol=symbol, bids=bids, asks=asks)
 
 

@@ -1,6 +1,6 @@
 """Slippage guard package."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.1"
 
 from slippage_guard.types import ExecutionPlan, SlippageResult
 from slippage_guard.engine import simulate_execution
