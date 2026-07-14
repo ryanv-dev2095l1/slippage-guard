@@ -1,47 +1,76 @@
+import time
 from decimal import Decimal
 import httpx
 from slippage_guard.types import OrderBook, Exchange
 
 
-TIMEOUT_SECONDS = 5.0
+TIMEOUT = 6.0
+MAX_RETRIES = 2
 
 
-def _parse_levels(raw_levels):
-    return [(Decimal(p), Decimal(s)) for p, s in raw_levels]
+def _request_with_retry(url: str, params: dict = None, headers: dict = None) -> dict:
+    last_err = None
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            r = httpx.get(url, params=params, headers=headers, timeout=TIMEOUT)
+            if r.status_code == 429:
+                # rate limited, back off briefly
+                time.sleep(0.4 * (attempt + 1))
+                continue
+            r.raise_for_status()
+            return r.json()
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.HTTPStatusError) as e:
+            last_err = e
+            if attempt < MAX_RETRIES:
+                time.sleep(0.25 * (attempt + 1))
+    raise RuntimeError(f"failed fetching {url} after {MAX_RETRIES + 1} attempts: {last_err}")
 
 
 def fetch_binance(symbol: str, limit: int = 100) -> OrderBook:
     url = "https://api.binance.com/api/v3/depth"
-    clean_sym = symbol.replace("-", "").replace("/", "").upper()
-    resp = httpx.get(url, params={"symbol": clean_sym, "limit": limit}, timeout=TIMEOUT_SECONDS)
-    resp.raise_for_status()
-    data = resp.json()
+    clean_sym = symbol.replace("-", "").replace("/", "").replace("_", "").upper()
+    data = _request_with_retry(url, params={"symbol": clean_sym, "limit": limit})
 
-    return OrderBook(
-        exchange=Exchange.BINANCE,
-        symbol=symbol,
-        bids=_parse_levels(data["bids"]),
-        asks=_parse_levels(data["asks"]),
-    )
+    bids = [(Decimal(p), Decimal(s)) for p, s in data.get("bids", [])]
+    asks = [(Decimal(p), Decimal(s)) for p, s in data.get("asks", [])]
+    return OrderBook(exchange=Exchange.BINANCE, symbol=symbol, bids=bids, asks=asks)
 
 
 def fetch_coinbase(symbol: str) -> OrderBook:
-    clean_sym = symbol.replace("/", "-").upper()
+    clean_sym = symbol.replace("/", "-").replace("_", "-").upper()
     url = f"https://api.exchange.coinbase.com/products/{clean_sym}/book?level=2"
-    resp = httpx.get(url, timeout=TIMEOUT_SECONDS)
-    resp.raise_for_status()
-    data = resp.json()
+    # coinbase requires user-agent now or returns 403 on some cloud IPs
+    headers = {"User-Agent": "slippage-guard/0.1"}
+    data = _request_with_retry(url, headers=headers)
 
-    # coinbase level 2 gives [price, size, num_orders]
-    bids = [(Decimal(item[0]), Decimal(item[1])) for item in data["bids"]]
-    asks = [(Decimal(item[0]), Decimal(item[1])) for item in data["asks"]]
+    bids = [(Decimal(item[0]), Decimal(item[1])) for item in data.get("bids", [])]
+    asks = [(Decimal(item[0]), Decimal(item[1])) for item in data.get("asks", [])]
+    return OrderBook(exchange=Exchange.COINBASE, symbol=symbol, bids=bids, asks=asks)
 
-    return OrderBook(
-        exchange=Exchange.COINBASE,
-        symbol=symbol,
-        bids=bids,
-        asks=asks,
-    )
+
+def fetch_kraken(symbol: str, count: int = 100) -> OrderBook:
+    # kraken symbol mapping can be weird (e.g. XBTUSDT or XXBTZUSD)
+    clean_sym = symbol.replace("/", "").replace("-", "").replace("_", "").upper()
+    if clean_sym == "BTCUSD":
+        clean_sym = "XXBTZUSD"
+    elif clean_sym == "ETHUSD":
+        clean_sym = "XETHZUSD"
+    elif clean_sym == "BTCUSDT":
+        clean_sym = "XBTUSDT"
+
+    url = "https://api.kraken.com/0/public/Depth"
+    data = _request_with_retry(url, params={"pair": clean_sym, "count": count})
+    if data.get("error"):
+        raise RuntimeError(f"kraken error: {data['error']}")
+
+    result = data["result"]
+    # kraken returns pair as the only key inside result
+    pair_key = next(iter(result))
+    pair_data = result[pair_key]
+
+    bids = [(Decimal(item[0]), Decimal(item[1])) for item in pair_data.get("bids", [])]
+    asks = [(Decimal(item[0]), Decimal(item[1])) for item in pair_data.get("asks", [])]
+    return OrderBook(exchange=Exchange.KRAKEN, symbol=symbol, bids=bids, asks=asks)
 
 
 def get_order_book(exchange: Exchange, symbol: str, depth: int = 100) -> OrderBook:
@@ -49,4 +78,6 @@ def get_order_book(exchange: Exchange, symbol: str, depth: int = 100) -> OrderBo
         return fetch_binance(symbol, depth)
     elif exchange == Exchange.COINBASE:
         return fetch_coinbase(symbol)
+    elif exchange == Exchange.KRAKEN:
+        return fetch_kraken(symbol, depth)
     raise ValueError(f"unsupported exchange: {exchange}")
