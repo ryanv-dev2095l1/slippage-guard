@@ -40,4 +40,4 @@ python execute_rebalance.py --pair "$PAIR" --usd "$AMOUNT_USD"
 - `2`: Guard tripped. Slippage exceeds `--max-slippage-bps` or available book depth cannot absorb order.
 - `1`: Network failure, timeout, invalid symbol, or exchange rate limit.
 
-<!-- generated: 2026-09-08 -->
+<!-- generated: 2026-09-09 -->
